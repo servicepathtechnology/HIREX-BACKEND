@@ -1,7 +1,6 @@
 """Application configuration loaded from environment variables."""
 
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
 from typing import List
 import json
 
@@ -12,23 +11,20 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     secret_key: str = "change-me-in-production"
-    allowed_origins: List[str] = ["*"]
 
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, v):
-        if isinstance(v, list):
-            return v
-        if isinstance(v, str):
-            v = v.strip()
-            if v.startswith("["):
-                try:
-                    return json.loads(v)
-                except Exception:
-                    pass
-            # Plain string like "*" or comma-separated
-            return [o.strip() for o in v.split(",") if o.strip()]
-        return ["*"]
+    # Store as plain str so pydantic-settings never tries to JSON-decode it.
+    # Use the `allowed_origins_list` property everywhere in the app.
+    allowed_origins: str = "*"
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        v = self.allowed_origins.strip()
+        if v.startswith("["):
+            try:
+                return json.loads(v)
+            except Exception:
+                pass
+        return [o.strip() for o in v.split(",") if o.strip()] or ["*"]
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:password@localhost:5432/hirex_db"
@@ -38,7 +34,7 @@ class Settings(BaseSettings):
 
     # Firebase — use JSON env var in production, file path in local dev
     firebase_credentials_path: str = "./firebase-credentials.json"
-    firebase_credentials_json: str = ""  # JSON string, takes priority over path
+    firebase_credentials_json: str = ""
 
     # AWS (Part 2)
     aws_access_key_id: str = ""

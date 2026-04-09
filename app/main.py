@@ -82,7 +82,7 @@ except ImportError:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins if settings.app_env != "development" else ["*"],
+    allow_origins=settings.allowed_origins_list if settings.app_env != "development" else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
