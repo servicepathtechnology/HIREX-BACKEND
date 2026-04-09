@@ -51,6 +51,8 @@ class UpdateTaskRequest(BaseModel):
     prize_or_opportunity: Optional[str] = None
     estimated_hours: Optional[float] = None
     tier: Optional[str] = None
+    is_published: Optional[bool] = None
+    is_active: Optional[bool] = None
 
 
 class RecruiterTaskResponse(BaseModel):
