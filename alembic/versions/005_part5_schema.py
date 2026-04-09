@@ -60,14 +60,14 @@ def upgrade() -> None:
     )
 
     # ── Performance indexes ───────────────────────────────────────────────────
-    op.create_index("ix_tasks_recruiter_id", "tasks", ["recruiter_id"])
-    op.create_index("ix_submissions_task_id", "submissions", ["task_id"])
-    op.create_index("ix_submissions_candidate_id", "submissions", ["candidate_id"])
-    op.create_index("ix_pipeline_entries_recruiter_id", "pipeline_entries", ["recruiter_id"])
-    op.create_index("ix_submissions_task_status", "submissions", ["task_id", "status"])
-    op.create_index("ix_tasks_published_active_deadline", "tasks", ["is_published", "is_active", "deadline"])
-    op.create_index("ix_notifications_user_read", "notifications", ["user_id", "is_read", "created_at"])
-    op.create_index("ix_users_referral_code", "users", ["referral_code"])
+    op.create_index("ix_tasks_recruiter_id", "tasks", ["recruiter_id"], if_not_exists=True)
+    op.create_index("ix_submissions_task_id", "submissions", ["task_id"], if_not_exists=True)
+    op.create_index("ix_submissions_candidate_id", "submissions", ["candidate_id"], if_not_exists=True)
+    op.create_index("ix_pipeline_entries_recruiter_id", "pipeline_entries", ["recruiter_id"], if_not_exists=True)
+    op.create_index("ix_submissions_task_status", "submissions", ["task_id", "status"], if_not_exists=True)
+    op.create_index("ix_tasks_published_active_deadline", "tasks", ["is_published", "is_active", "deadline"], if_not_exists=True)
+    op.create_index("ix_notifications_user_read", "notifications", ["user_id", "is_read", "created_at"], if_not_exists=True)
+    op.create_index("ix_users_referral_code", "users", ["referral_code"], if_not_exists=True)
 
 
 def downgrade() -> None:
