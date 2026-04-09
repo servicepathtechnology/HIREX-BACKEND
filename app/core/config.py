@@ -1,6 +1,7 @@
 """Application configuration loaded from environment variables."""
 
 from pydantic_settings import BaseSettings
+from pydantic import field_validator
 from typing import List
 import json
 
@@ -12,6 +13,22 @@ class Settings(BaseSettings):
     app_env: str = "development"
     secret_key: str = "change-me-in-production"
     allowed_origins: List[str] = ["*"]
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            v = v.strip()
+            if v.startswith("["):
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            # Plain string like "*" or comma-separated
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return ["*"]
 
     # Database
     database_url: str = "postgresql+asyncpg://postgres:password@localhost:5432/hirex_db"
@@ -48,16 +65,6 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
-
-    def model_post_init(self, __context) -> None:
-        # Handle ALLOWED_ORIGINS as JSON array string from .env
-        if isinstance(self.allowed_origins, list) and len(self.allowed_origins) == 1:
-            raw = self.allowed_origins[0]
-            if raw.startswith('['):
-                try:
-                    object.__setattr__(self, 'allowed_origins', json.loads(raw))
-                except Exception:
-                    pass
 
 
 settings = Settings()
