@@ -27,6 +27,16 @@ async def get_current_user(
     result = await db.execute(select(User).where(User.firebase_uid == firebase_uid))
     user = result.scalar_one_or_none()
 
+    # Fallback: look up by email in case firebase_uid changed
+    if not user:
+        email = decoded.get("email")
+        if email:
+            result = await db.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            if user:
+                user.firebase_uid = firebase_uid
+                await db.flush()
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

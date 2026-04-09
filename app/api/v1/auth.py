@@ -34,10 +34,21 @@ async def health_check() -> HealthResponse:
 async def register(payload: RegisterRequest, db: AsyncSession = Depends(get_db)) -> UserResponse:
     """
     Create a user record in PostgreSQL after Firebase signup.
-    Idempotent — returns existing user if firebase_uid already exists.
+    Idempotent — returns existing user if firebase_uid OR email already exists.
     """
+    # Check by firebase_uid first
     result = await db.execute(select(User).where(User.firebase_uid == payload.firebase_uid))
     existing = result.scalar_one_or_none()
+
+    # Also check by email (handles re-registration after DB wipe or UID mismatch)
+    if not existing:
+        result = await db.execute(select(User).where(User.email == payload.email))
+        existing = result.scalar_one_or_none()
+        if existing:
+            # Update firebase_uid in case it changed (e.g. account re-linked)
+            existing.firebase_uid = payload.firebase_uid
+            await db.flush()
+
     if existing:
         return UserResponse.model_validate(existing)
 
