@@ -17,14 +17,15 @@ def init_firebase() -> None:
     """Initialize Firebase Admin SDK. Called once on app startup."""
     global _firebase_app
     if not firebase_admin._apps:
-        # Priority: FIREBASE_CREDENTIALS_JSON env var (for cloud) > file path (for local)
         creds_json = settings.firebase_credentials_json.strip()
         if creds_json:
             try:
-                cred_dict = json.loads(creds_json)
+                # Render may interpret \n in env vars as real newlines.
+                # json.loads with strict=False accepts control characters.
+                cred_dict = json.loads(creds_json, strict=False)
             except json.JSONDecodeError as e:
                 raise RuntimeError(
-                    f"FIREBASE_CREDENTIALS_JSON is set but contains invalid JSON: {e}. "
+                    f"FIREBASE_CREDENTIALS_JSON contains invalid JSON: {e}. "
                     "Make sure you pasted the full single-line JSON string."
                 )
             cred = credentials.Certificate(cred_dict)
