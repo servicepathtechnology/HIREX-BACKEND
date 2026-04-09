@@ -165,6 +165,15 @@ async def create_task(
     slug = _slugify(payload.title)
     criteria = payload.evaluation_criteria or DEFAULT_CRITERIA
 
+    # Normalize task_type to enum value
+    task_type_map = {
+        'code challenge': 'code', 'design challenge': 'design',
+        'case study': 'case_study', 'business problem': 'business',
+        'product task': 'product', 'writing task': 'writing',
+    }
+    raw_type = payload.task_type.lower()
+    task_type = task_type_map.get(raw_type, raw_type.replace(" ", "_"))
+
     task = Task(
         recruiter_id=current_user.id,
         title=payload.title,
@@ -174,7 +183,7 @@ async def create_task(
         evaluation_criteria=criteria,
         domain=payload.domain.lower(),
         difficulty=payload.difficulty.lower(),
-        task_type=payload.task_type.lower().replace(" ", "_"),
+        task_type=task_type,
         submission_types=payload.submission_types or [],
         max_file_size_mb=payload.max_file_size_mb,
         allowed_file_types=payload.allowed_file_types,
@@ -284,7 +293,14 @@ async def update_task(
         elif field == "difficulty":
             value = value.lower()
         elif field == "task_type":
-            value = value.lower().replace(" ", "_")
+            # Map display names to enum values
+            task_type_map = {
+                'code challenge': 'code', 'design challenge': 'design',
+                'case study': 'case_study', 'business problem': 'business',
+                'product task': 'product', 'writing task': 'writing',
+            }
+            normalized = value.lower().replace(" ", "_")
+            value = task_type_map.get(value.lower(), normalized)
         setattr(task, field, value)
 
     task.updated_at = datetime.utcnow()
