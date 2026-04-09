@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: hirex_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+
+  celery_worker:
+    build: .
+    command: celery -A backend.celery_app worker --loglevel=info --concurrency=4 -Q ai_scoring,celery
+    env_file:
+      - .env
+    depends_on:
+      - db
+      - redis
+    volumes:
+      - ./firebase-credentials.json:/app/firebase-credentials.json:ro
+
+volumes:
+  postgres_data:
