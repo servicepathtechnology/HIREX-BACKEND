@@ -55,6 +55,7 @@ async def upload_avatar(
 
     s3 = boto3.client(
         "s3",
+        region_name=settings.aws_region,
         aws_access_key_id=settings.aws_access_key_id,
         aws_secret_access_key=settings.aws_secret_access_key,
     )
@@ -63,6 +64,7 @@ async def upload_avatar(
         Key=key,
         Body=contents,
         ContentType=file.content_type,
+        ACL="public-read",
     )
 
     base = settings.aws_cloudfront_url.rstrip("/") if settings.aws_cloudfront_url else \

@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_s3_bucket: str = ""
     aws_cloudfront_url: str = ""
+    aws_region: str = "us-east-1"
 
     # Razorpay (Part 3)
     razorpay_key_id: str = ""
