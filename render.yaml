@@ -35,3 +35,7 @@ services:
         sync: false
       - key: CELERY_RESULT_BACKEND
         sync: false
+      - key: JUDGE0_API_KEY
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
