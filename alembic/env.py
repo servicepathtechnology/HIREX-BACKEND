@@ -10,6 +10,8 @@ from app.core.config import settings
 from app.core.database import Base
 import app.models.user  # noqa: F401 — ensure models are registered
 import app.models.task  # noqa: F401 — ensure Part 2 models are registered
+import app.models.recruiter  # noqa: F401 — ensure Part 3 models are registered
+import app.models.challenges  # noqa: F401 — ensure Part 1 challenge models are registered
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.database_url)

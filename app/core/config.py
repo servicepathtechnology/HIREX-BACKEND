@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     mixpanel_token: str = ""
     branch_key: str = ""
 
+    # Part 1 — 1v1 Live Challenges
+    judge0_api_key: str = ""
+
     class Config:
         env_file = ".env"
         case_sensitive = False
