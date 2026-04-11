@@ -153,7 +153,7 @@ async def _push_challenge_notification(
     data: dict,
     notif_type: str,
 ) -> None:
-    """Create in-app notification. FCM push is sent after DB commit via background task."""
+    """Create in-app notification only. FCM push is sent separately after commit."""
     from app.services.notification_service import create_notification
     await create_notification(
         db=db,
@@ -163,15 +163,18 @@ async def _push_challenge_notification(
         body=body,
         data=data,
     )
-    # FCM push is fire-and-forget using a fresh DB session (after commit)
-    import asyncio
-    asyncio.create_task(_send_fcm_after_commit(
-        user_id=user_id,
-        title=title,
-        body=body,
-        data=data,
-        notif_type=notif_type,
-    ))
+    # Schedule FCM push as a fire-and-forget background task (after DB commit)
+    try:
+        import asyncio
+        asyncio.ensure_future(_send_fcm_after_commit(
+            user_id=user_id,
+            title=title,
+            body=body,
+            data=data,
+            notif_type=notif_type,
+        ))
+    except Exception as e:
+        logger.debug(f"FCM task scheduling failed (non-critical): {e}")
 
 
 async def _send_fcm_after_commit(
@@ -264,15 +267,19 @@ async def send_invite(
     result = await db.execute(select(Match).where(Match.id == match.id))
     match = result.scalar_one()
 
-    # In-app + FCM notification to opponent
-    await _push_challenge_notification(
-        db=db,
-        user_id=opponent_uuid,
-        title=f"{current_user.full_name} challenged you!",
-        body=f"{current_user.full_name} challenged you to a 1v1 in {payload.domain.title()}",
-        data={"match_id": str(match.id), "type": "challenge_invite"},
-        notif_type="challenge_invite",
-    )
+    # In-app + FCM notification to opponent — wrapped so it never rolls back the match
+    try:
+        await _push_challenge_notification(
+            db=db,
+            user_id=opponent_uuid,
+            title=f"{current_user.full_name} challenged you!",
+            body=f"{current_user.full_name} challenged you to a 1v1 in {payload.domain.title()}",
+            data={"match_id": str(match.id), "type": "challenge_invite"},
+            notif_type="challenge_invite",
+        )
+    except Exception as e:
+        logger.warning(f"Notification failed for match {match.id}: {e}")
+        # Don't re-raise — match must be saved regardless
 
     # Schedule expiry (non-blocking background task)
     background_tasks.add_task(_expire_match_after_24h, str(match.id))
@@ -308,25 +315,27 @@ async def accept_invite(
     await db.flush()
 
     # Notify challenger: accepted
-    await _push_challenge_notification(
-        db=db,
-        user_id=match.challenger_id,
-        title="Challenge accepted!",
-        body=f"{current_user.full_name} accepted your challenge. Get ready!",
-        data={"match_id": str(match_id), "type": "challenge_accepted"},
-        notif_type="challenge_accepted",
-    )
-
-    # Notify both: match starting in 60s
-    for uid in (match.challenger_id, match.opponent_id):
+    try:
         await _push_challenge_notification(
             db=db,
-            user_id=uid,
-            title="Match starting in 60 seconds!",
-            body="Your match starts in 60 seconds. Head to the room!",
-            data={"match_id": str(match_id), "type": "match_starting"},
-            notif_type="match_starting",
+            user_id=match.challenger_id,
+            title="Challenge accepted!",
+            body=f"{current_user.full_name} accepted your challenge. Get ready!",
+            data={"match_id": str(match_id), "type": "challenge_accepted"},
+            notif_type="challenge_accepted",
         )
+        # Notify both: match starting in 60s
+        for uid in (match.challenger_id, match.opponent_id):
+            await _push_challenge_notification(
+                db=db,
+                user_id=uid,
+                title="Match starting in 60 seconds!",
+                body="Your match starts in 60 seconds. Head to the room!",
+                data={"match_id": str(match_id), "type": "match_starting"},
+                notif_type="match_starting",
+            )
+    except Exception as e:
+        logger.warning(f"Accept notification failed: {e}")
 
     # Broadcast timer_start via WebSocket (non-blocking)
     background_tasks.add_task(
@@ -358,14 +367,17 @@ async def decline_invite(
     match.status = "cancelled"
     await db.flush()
 
-    await _push_challenge_notification(
-        db=db,
-        user_id=match.challenger_id,
-        title="Challenge declined",
-        body=f"{current_user.full_name} declined your challenge.",
-        data={"match_id": str(match_id), "type": "challenge_declined"},
-        notif_type="challenge_declined",
-    )
+    try:
+        await _push_challenge_notification(
+            db=db,
+            user_id=match.challenger_id,
+            title="Challenge declined",
+            body=f"{current_user.full_name} declined your challenge.",
+            data={"match_id": str(match_id), "type": "challenge_declined"},
+            notif_type="challenge_declined",
+        )
+    except Exception as e:
+        logger.warning(f"Decline notification failed: {e}")
 
     return {"status": "declined"}
 
