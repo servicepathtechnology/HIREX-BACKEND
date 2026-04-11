@@ -32,6 +32,8 @@ from app.api.v1.subscriptions import router as subscriptions_router, webhook_rou
 from app.api.v1.referrals import router as referrals_router
 from app.api.v1.og_images import router as og_router
 from app.admin.admin_router import router as admin_router
+# Part 1 — 1v1 Live Challenges
+from app.api.v1.candidates import router as candidates_router
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,8 @@ app.include_router(webhook_router, prefix="/api/v1")
 app.include_router(referrals_router, prefix="/api/v1")
 app.include_router(og_router, prefix="/api/v1")
 app.include_router(admin_router)
+# Part 1 — 1v1 Live Challenges
+app.include_router(candidates_router, prefix="/api/v1")
 
 
 @app.get("/")
