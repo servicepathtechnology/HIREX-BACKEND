@@ -1,4 +1,4 @@
-"""HireX FastAPI application entry point — v5.0 Production."""
+"""HireX FastAPI application entry point — v5.1 Production."""
 
 from contextlib import asynccontextmanager
 import logging
@@ -135,4 +135,4 @@ async def root():
 
 @app.get("/api/v1/health")
 async def health():
-    return {"status": "ok", "environment": settings.app_env, "version": "5.0.0"}
+    return {"status": "ok", "environment": settings.app_env, "version": "5.1.0"}
