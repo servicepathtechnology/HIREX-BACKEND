@@ -153,7 +153,7 @@ async def _push_challenge_notification(
     data: dict,
     notif_type: str,
 ) -> None:
-    """Send both in-app notification and FCM push."""
+    """Create in-app notification. FCM push is sent after DB commit via background task."""
     from app.services.notification_service import create_notification
     await create_notification(
         db=db,
@@ -163,16 +163,39 @@ async def _push_challenge_notification(
         body=body,
         data=data,
     )
+    # FCM push is fire-and-forget using a fresh DB session (after commit)
+    import asyncio
+    asyncio.create_task(_send_fcm_after_commit(
+        user_id=user_id,
+        title=title,
+        body=body,
+        data=data,
+        notif_type=notif_type,
+    ))
+
+
+async def _send_fcm_after_commit(
+    user_id: UUID,
+    title: str,
+    body: str,
+    data: dict,
+    notif_type: str,
+) -> None:
+    """Send FCM push in a fresh DB session after the parent transaction commits."""
+    # Small delay to ensure the parent transaction has committed
+    import asyncio
+    await asyncio.sleep(0.5)
     try:
-        from backend.notifications.fcm_service import send_push_notification
-        await send_push_notification(
-            db=db,
-            user_id=user_id,
-            title=title,
-            body=body,
-            data=data,
-            notif_type=notif_type,
-        )
+        async with AsyncSessionLocal() as db:
+            from backend.notifications.fcm_service import send_push_notification
+            await send_push_notification(
+                db=db,
+                user_id=user_id,
+                title=title,
+                body=body,
+                data=data,
+                notif_type=notif_type,
+            )
     except Exception as e:
         logger.warning(f"FCM push failed for {user_id}: {e}")
 

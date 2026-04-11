@@ -23,6 +23,14 @@ DEFAULT_PREFS = {
     "ai_scoring_complete": True,
     "submission_count_milestone": False,
     "task_closed": True,
+    # Part 1 — 1v1 Live Challenges
+    "challenge_invite": True,
+    "challenge_accepted": True,
+    "challenge_declined": True,
+    "match_starting": True,
+    "match_result_ready": True,
+    "elo_tier_changed": True,
+    "invite_expired": True,
 }
 
 
@@ -64,18 +72,24 @@ async def send_push_notification(
     notif_type: str,
 ) -> None:
     """Send FCM push to all active devices for a user, respecting notification prefs."""
-    from app.models.user import User
-    # Check notification preferences
-    user_result = await db.execute(select(User).where(User.id == user_id))
-    user = user_result.scalar_one_or_none()
-    if user:
-        prefs = user.notification_prefs or DEFAULT_PREFS
-        if not prefs.get(notif_type, DEFAULT_PREFS.get(notif_type, True)):
-            logger.debug(f"Push suppressed for {user_id}: {notif_type} disabled in prefs")
-            return
+    from app.models.user import CandidateProfile
+    # Check notification preferences (stored on CandidateProfile, not User)
+    try:
+        profile_result = await db.execute(
+            select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+        )
+        profile = profile_result.scalar_one_or_none()
+        if profile and profile.notification_prefs:
+            prefs = profile.notification_prefs
+            if not prefs.get(notif_type, DEFAULT_PREFS.get(notif_type, True)):
+                logger.debug(f"Push suppressed for {user_id}: {notif_type} disabled in prefs")
+                return
+    except Exception:
+        pass  # If prefs check fails, still send the notification
 
     tokens = await get_active_fcm_tokens(db, user_id)
     if not tokens:
+        logger.debug(f"No FCM tokens for user {user_id}, skipping push")
         return
 
     badge_count = await get_unread_count(db, user_id)
