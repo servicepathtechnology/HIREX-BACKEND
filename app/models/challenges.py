@@ -64,6 +64,7 @@ class Match(Base):
     challenger_elo_after = Column(Integer, nullable=True)
     opponent_elo_after = Column(Integer, nullable=True)
     invite_message = Column(String(200), nullable=True)
+    challenge_link = Column(Text, nullable=True)
     spectator_count = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

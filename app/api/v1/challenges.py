@@ -51,8 +51,8 @@ class SendInviteRequest(BaseModel):
     @field_validator("duration_minutes")
     @classmethod
     def validate_duration(cls, v: int) -> int:
-        if v not in (30, 60):
-            raise ValueError("duration_minutes must be 30 or 60")
+        if v not in (15, 30, 60):
+            raise ValueError("duration_minutes must be 15, 30, or 60")
         return v
 
 
@@ -94,6 +94,7 @@ def _serialize_match(match: Match) -> dict:
         "task_description": task.description if task else None,
         "task_requirements": task.requirements if task else None,
         "invite_message": match.invite_message,
+        "challenge_link": match.challenge_link,
         "spectator_count": match.spectator_count or 0,
     }
 
@@ -314,24 +315,37 @@ async def accept_invite(
     match.started_at = datetime.utcnow()
     await db.flush()
 
-    # Notify challenger: accepted
+    # Generate and persist the external challenge room link
+    from app.services.challenge_link_service import generate_challenge_link
+    match.challenge_link = generate_challenge_link(match.id)
+    await db.flush()
+
+    # Notify challenger: accepted — include challenge_link in notification data
     try:
         await _push_challenge_notification(
             db=db,
             user_id=match.challenger_id,
             title="Challenge accepted!",
             body=f"{current_user.full_name} accepted your challenge. Get ready!",
-            data={"match_id": str(match_id), "type": "challenge_accepted"},
+            data={
+                "match_id": str(match_id),
+                "type": "challenge_accepted",
+                "challenge_link": match.challenge_link,
+            },
             notif_type="challenge_accepted",
         )
-        # Notify both: match starting in 60s
+        # Notify both: match starting — include link so both can open it
         for uid in (match.challenger_id, match.opponent_id):
             await _push_challenge_notification(
                 db=db,
                 user_id=uid,
                 title="Match starting in 60 seconds!",
                 body="Your match starts in 60 seconds. Head to the room!",
-                data={"match_id": str(match_id), "type": "match_starting"},
+                data={
+                    "match_id": str(match_id),
+                    "type": "match_starting",
+                    "challenge_link": match.challenge_link,
+                },
                 notif_type="match_starting",
             )
     except Exception as e:
@@ -691,3 +705,68 @@ async def _evaluate_now(match_id: str) -> None:
         await _trigger_evaluation(match_id)
     except Exception as e:
         logger.error(f"Immediate evaluation failed for {match_id}: {e}")
+
+
+@router.get("/matches/{match_id}/compare")
+async def get_match_compare(
+    match_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Returns side-by-side comparison data for both players.
+    Available once match.status == 'completed'.
+    Both players can call this; opponent's ai_feedback is hidden.
+    """
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+    if match.status != "completed":
+        raise HTTPException(status_code=404, detail="Match not completed yet.")
+
+    subs_result = await db.execute(
+        select(ChallengeSubmission).where(ChallengeSubmission.match_id == match_id)
+    )
+    submissions = subs_result.scalars().all()
+
+    is_challenger = match.challenger_id == current_user.id
+    my_id = current_user.id
+    opp_id = match.opponent_id if is_challenger else match.challenger_id
+
+    my_sub = next((s for s in submissions if s.user_id == my_id), None)
+    opp_sub = next((s for s in submissions if s.user_id == opp_id), None)
+
+    my_elo_before = match.challenger_elo_before if is_challenger else match.opponent_elo_before
+    my_elo_after = match.challenger_elo_after if is_challenger else match.opponent_elo_after
+    opp_elo_before = match.opponent_elo_before if is_challenger else match.challenger_elo_before
+    opp_elo_after = match.opponent_elo_after if is_challenger else match.challenger_elo_after
+
+    def _sub_public(sub: ChallengeSubmission | None, is_me: bool) -> dict | None:
+        if not sub:
+            return None
+        return {
+            "user_id": str(sub.user_id),
+            "score": sub.score,
+            "time_taken_seconds": int(
+                (sub.submitted_at - match.started_at).total_seconds()
+            ) if match.started_at else None,
+            "is_auto": sub.is_auto,
+            "language": sub.language,
+            "score_breakdown": sub.score_breakdown if is_me else None,
+            "ai_feedback": sub.ai_feedback if is_me else None,
+        }
+
+    return {
+        "match": _serialize_match(match),
+        "my_result": _sub_public(my_sub, True),
+        "opponent_result": _sub_public(opp_sub, False),
+        "winner_id": str(match.winner_id) if match.winner_id else None,
+        "is_draw": match.winner_id is None,
+        "my_elo_change": (my_elo_after - my_elo_before) if my_elo_after is not None else 0,
+        "opponent_elo_change": (opp_elo_after - opp_elo_before) if opp_elo_after is not None else 0,
+        "my_new_elo": my_elo_after if my_elo_after is not None else my_elo_before,
+        "opponent_new_elo": opp_elo_after if opp_elo_after is not None else opp_elo_before,
+        "my_new_tier": _tier_from_elo(my_elo_after if my_elo_after is not None else my_elo_before),
+        "opponent_new_tier": _tier_from_elo(opp_elo_after if opp_elo_after is not None else opp_elo_before),
+    }

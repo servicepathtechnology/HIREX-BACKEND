@@ -61,6 +61,8 @@ class Settings(BaseSettings):
 
     # Part 1 — 1v1 Live Challenges
     judge0_api_key: str = ""
+    challenge_room_base_url: str = "https://hirex-challenge-room.vercel.app"
+    challenge_jwt_secret: str = "challenge-room-secret-change-in-prod"
 
     class Config:
         env_file = ".env"

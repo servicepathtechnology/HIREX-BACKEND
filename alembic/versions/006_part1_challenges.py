@@ -74,7 +74,7 @@ def upgrade() -> None:
             domain challenge_domain NOT NULL,
             task_id UUID REFERENCES challenge_tasks(id) ON DELETE SET NULL,
             duration_minutes INTEGER NOT NULL DEFAULT 30
-                CONSTRAINT ck_matches_duration CHECK (duration_minutes IN (30, 60)),
+                CONSTRAINT ck_matches_duration CHECK (duration_minutes IN (15, 30, 60)),
             status match_status NOT NULL DEFAULT 'pending',
             started_at TIMESTAMP,
             ended_at TIMESTAMP,
