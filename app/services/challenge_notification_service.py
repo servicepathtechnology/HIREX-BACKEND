@@ -118,3 +118,27 @@ async def notify_invite_expired(
         body=f"Your challenge invite to {opponent_name} expired.",
         data={"match_id": match_id, "type": "invite_expired"},
     )
+
+
+_BADGE_DISPLAY = {
+    "coding_warrior": ("🏅 Coding Warrior", "You won an Easy 1v1 challenge!"),
+    "code_crusher":   ("💪 Code Crusher",   "You won a Medium 1v1 challenge!"),
+    "algorithm_master": ("🧠 Algorithm Master", "You won a Hard 1v1 challenge!"),
+}
+
+
+async def notify_challenge_badge_earned(
+    db: AsyncSession,
+    user_id: UUID,
+    badge_slug: str,
+    match_id: str,
+) -> None:
+    title, body = _BADGE_DISPLAY.get(badge_slug, ("🏆 Badge Earned!", "You earned a new badge!"))
+    await create_notification(
+        db=db,
+        user_id=user_id,
+        notif_type="challenge_badge_earned",
+        title=title,
+        body=body,
+        data={"badge": badge_slug, "match_id": match_id, "type": "challenge_badge_earned"},
+    )

@@ -24,6 +24,12 @@ class ChallengeTask(Base):
         nullable=False,
         index=True,
     )
+    difficulty = Column(
+        Enum("easy", "medium", "hard", name="challenge_difficulty"),
+        nullable=False,
+        default="easy",
+        index=True,
+    )
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
     requirements = Column(Text, nullable=True)
@@ -48,6 +54,11 @@ class Match(Base):
         nullable=False,
     )
     task_id = Column(UUID(as_uuid=True), ForeignKey("challenge_tasks.id"), nullable=True)
+    difficulty = Column(
+        Enum("easy", "medium", "hard", name="challenge_difficulty"),
+        nullable=False,
+        default="easy",
+    )
     duration_minutes = Column(Integer, nullable=False, default=30)
     status = Column(
         Enum("pending", "active", "completed", "cancelled", "expired",
@@ -64,8 +75,11 @@ class Match(Base):
     challenger_elo_after = Column(Integer, nullable=True)
     opponent_elo_after = Column(Integer, nullable=True)
     invite_message = Column(String(200), nullable=True)
+    decline_reason = Column(String(100), nullable=True)
     challenge_link = Column(Text, nullable=True)
     spectator_count = Column(Integer, default=0, nullable=False)
+    winner_points = Column(Integer, default=0, nullable=True)
+    challenge_badge = Column(String(50), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -125,3 +139,70 @@ class UserElo(Base):
 
     # selectin for async-safe eager loading
     user = relationship("User", foreign_keys=[user_id], lazy="selectin")
+
+
+class Question(Base):
+    """Full coding question with test cases — PRD §7.5."""
+
+    __tablename__ = "questions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String(200), nullable=False)
+    difficulty = Column(String(10), nullable=False, index=True)
+    problem_statement = Column(Text, nullable=False)
+    constraints = Column(Text, nullable=True)
+    input_format = Column(Text, nullable=True)
+    output_format = Column(Text, nullable=True)
+    sample_input_1 = Column(Text, nullable=True)
+    sample_output_1 = Column(Text, nullable=True)
+    sample_input_2 = Column(Text, nullable=True)
+    sample_output_2 = Column(Text, nullable=True)
+    test_cases = Column(JSONB, nullable=True)   # [{input, expected_output}] — HIDDEN
+    time_limit_ms = Column(Integer, nullable=False, default=2000)
+    memory_limit_mb = Column(Integer, nullable=False, default=256)
+    editorial = Column(Text, nullable=True)
+    tags = Column(JSONB, nullable=True)         # list of strings
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class QuestionHistory(Base):
+    """Tracks which questions each user has seen — prevents repeats within 30 days."""
+
+    __tablename__ = "question_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id"), nullable=False)
+    match_id = Column(UUID(as_uuid=True), ForeignKey("matches.id"), nullable=False)
+    seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class ChallengeBadge(Base):
+    """Badge definitions for 1v1 challenges."""
+
+    __tablename__ = "challenge_badges"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    slug = Column(String(50), unique=True, nullable=False)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    icon_url = Column(Text, nullable=True)
+    condition = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class UserChallengeBadge(Base):
+    """Earned 1v1 challenge badges per user."""
+
+    __tablename__ = "user_challenge_badges"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    badge_slug = Column(String(50), nullable=False)
+    match_id = Column(UUID(as_uuid=True), ForeignKey("matches.id"), nullable=True)
+    earned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "badge_slug", name="uq_user_badge"),
+    )

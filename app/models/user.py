@@ -30,6 +30,7 @@ class User(Base):
     is_suspended = Column(Boolean, default=False, nullable=False)
     referral_code = Column(String(12), unique=True, nullable=True, index=True)
     referred_by_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    xp_points = Column(Integer, default=0, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

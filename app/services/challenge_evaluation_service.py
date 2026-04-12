@@ -121,6 +121,20 @@ async def evaluate_match(db: AsyncSession, match_id: UUID) -> None:
         match.challenger_elo_after = c_elo.elo
         match.opponent_elo_after = o_elo.elo
 
+        # Award points and badge to winner
+        if winner_id is not None:
+            difficulty = getattr(match, 'difficulty', 'easy')
+            points, badge = _winner_reward(difficulty)
+            match.winner_points = points
+            match.challenge_badge = badge
+            # Persist badge + XP to user profile
+            try:
+                await _award_challenge_badge(db, winner_id, badge, str(match_id))
+                await _credit_xp(db, winner_id, points)
+                await _credit_xp(db, match.opponent_id if winner_id == match.challenger_id else match.challenger_id, 10)  # participation XP
+            except Exception as e:
+                logger.warning(f"Badge/XP award failed: {e}")
+
         await db.flush()
 
         # Notify both players
@@ -331,4 +345,52 @@ def _heuristic_text_score(content: str) -> tuple[int, dict, str]:
             "Quality of Execution": per_dim,
         },
         "Submission received. Detailed AI feedback will be available shortly.",
+    )
+
+
+# ── Winner reward helpers ─────────────────────────────────────────────────────
+
+_DIFFICULTY_REWARDS = {
+    "easy":   (50,  "coding_warrior"),
+    "medium": (100, "code_crusher"),
+    "hard":   (200, "algorithm_master"),
+}
+
+
+def _winner_reward(difficulty: str) -> tuple[int, str]:
+    """Return (points, badge_slug) for the given difficulty."""
+    return _DIFFICULTY_REWARDS.get(difficulty, (50, "coding_warrior"))
+
+
+async def _award_challenge_badge(
+    db: AsyncSession,
+    user_id,
+    badge_slug: str,
+    match_id: str,
+) -> None:
+    """Persist a challenge win badge to user_challenge_badges and send notification."""
+    from app.models.challenges import UserChallengeBadge
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    # Upsert — ignore if already earned
+    stmt = pg_insert(UserChallengeBadge).values(
+        user_id=user_id,
+        badge_slug=badge_slug,
+        match_id=match_id,
+    ).on_conflict_do_nothing(constraint="uq_user_badge")
+    await db.execute(stmt)
+    try:
+        from app.services.challenge_notification_service import notify_challenge_badge_earned
+        await notify_challenge_badge_earned(db, user_id, badge_slug, match_id)
+    except Exception as e:
+        logger.warning(f"Badge notification failed for {user_id}: {e}")
+
+
+async def _credit_xp(db: AsyncSession, user_id, xp: int) -> None:
+    """Add XP points to user.xp_points."""
+    from app.models.user import User
+    from sqlalchemy import update
+    await db.execute(
+        update(User)
+        .where(User.id == user_id)
+        .values(xp_points=User.xp_points + xp)
     )

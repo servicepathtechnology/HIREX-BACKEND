@@ -44,22 +44,42 @@ MAX_PENDING_INVITES = 10
 
 class SendInviteRequest(BaseModel):
     opponent_id: str
-    domain: str = Field(..., pattern="^(coding|design|product|marketing|data|writing)$")
+    domain: str = Field("coding", pattern="^coding$")  # 1v1 is coding-only
     duration_minutes: int
+    difficulty: str = Field("easy", pattern="^(easy|medium|hard)$")
     invite_message: Optional[str] = Field(None, max_length=200)
 
     @field_validator("duration_minutes")
     @classmethod
     def validate_duration(cls, v: int) -> int:
-        if v not in (15, 30, 60):
-            raise ValueError("duration_minutes must be 15, 30, or 60")
+        if v not in (30, 60, 120):
+            raise ValueError("duration_minutes must be 30, 60, or 120")
         return v
+
+
+class DeclineInviteRequest(BaseModel):
+    reason: Optional[str] = Field(None, max_length=100)
+
+
+class RunSampleRequest(BaseModel):
+    content: str
+    language: Optional[str] = "python"
 
 
 class SubmitAnswerRequest(BaseModel):
     content: str
     language: Optional[str] = None
     is_auto: bool = False
+
+
+# Pre-defined decline reasons (returned to frontend for display)
+DECLINE_REASONS = [
+    "Not available right now",
+    "Maybe next time",
+    "I'm in a hurry",
+    "Not feeling confident",
+    "Try me later",
+]
 
 
 # ── Serializers ───────────────────────────────────────────────────────────────
@@ -94,8 +114,12 @@ def _serialize_match(match: Match) -> dict:
         "task_description": task.description if task else None,
         "task_requirements": task.requirements if task else None,
         "invite_message": match.invite_message,
+        "decline_reason": match.decline_reason,
         "challenge_link": match.challenge_link,
         "spectator_count": match.spectator_count or 0,
+        "difficulty": match.difficulty if hasattr(match, 'difficulty') else "easy",
+        "winner_points": match.winner_points or 0,
+        "challenge_badge": match.challenge_badge,
     }
 
 
@@ -135,11 +159,15 @@ def _serialize_elo(elo: UserElo) -> dict:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-async def _get_random_task(db: AsyncSession, domain: str) -> Optional[ChallengeTask]:
+async def _get_random_task(db: AsyncSession, domain: str, difficulty: str = "easy") -> Optional[ChallengeTask]:
     from sqlalchemy import func
     result = await db.execute(
         select(ChallengeTask)
-        .where(ChallengeTask.domain == domain, ChallengeTask.is_active.is_(True))
+        .where(
+            ChallengeTask.domain == domain,
+            ChallengeTask.difficulty == difficulty,
+            ChallengeTask.is_active.is_(True),
+        )
         .order_by(func.random())
         .limit(1)
     )
@@ -247,13 +275,14 @@ async def send_invite(
     c_elo = await get_or_create_elo(db, current_user.id)
     o_elo = await get_or_create_elo(db, opponent_uuid)
 
-    # Auto-assign a random task for the domain
-    task = await _get_random_task(db, payload.domain)
+    # Auto-assign a random task for the domain and difficulty
+    task = await _get_random_task(db, payload.domain, payload.difficulty)
 
     match = Match(
         challenger_id=current_user.id,
         opponent_id=opponent_uuid,
         domain=payload.domain,
+        difficulty=payload.difficulty,
         task_id=task.id if task else None,
         duration_minutes=payload.duration_minutes,
         status="pending",
@@ -274,7 +303,7 @@ async def send_invite(
             db=db,
             user_id=opponent_uuid,
             title=f"{current_user.full_name} challenged you!",
-            body=f"{current_user.full_name} challenged you to a 1v1 in {payload.domain.title()}",
+            body=f"{current_user.full_name} challenged you to a 1v1 Coding challenge ({payload.difficulty.title()})",
             data={"match_id": str(match.id), "type": "challenge_invite"},
             notif_type="challenge_invite",
         )
@@ -362,9 +391,16 @@ async def accept_invite(
     return _serialize_match(match)
 
 
+@router.get("/decline-reasons")
+async def get_decline_reasons() -> list[str]:
+    """Return pre-defined decline reasons for the UI."""
+    return DECLINE_REASONS
+
+
 @router.post("/matches/{match_id}/decline")
 async def decline_invite(
     match_id: UUID,
+    payload: DeclineInviteRequest = DeclineInviteRequest(),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -379,25 +415,89 @@ async def decline_invite(
         raise HTTPException(status_code=400, detail=f"Match is already {match.status}.")
 
     match.status = "cancelled"
+    match.decline_reason = payload.reason
     await db.flush()
 
+    reason_text = payload.reason or "Not available right now"
     try:
         await _push_challenge_notification(
             db=db,
             user_id=match.challenger_id,
             title="Challenge declined",
-            body=f"{current_user.full_name} is not ready right now and declined your challenge.",
+            body=f"{current_user.full_name} declined your challenge: \"{reason_text}\"",
             data={
                 "match_id": str(match_id),
                 "type": "challenge_declined",
                 "opponent_name": current_user.full_name or "Opponent",
+                "decline_reason": reason_text,
             },
             notif_type="challenge_declined",
         )
     except Exception as e:
         logger.warning(f"Decline notification failed: {e}")
 
-    return {"status": "declined"}
+    return {"status": "declined", "reason": reason_text}
+
+
+@router.post("/matches/{match_id}/cancel")
+async def cancel_invite(
+    match_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Challenger cancels their own pending invite."""
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+    if match.challenger_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the challenger can cancel this invite.")
+    if match.status != "pending":
+        raise HTTPException(status_code=400, detail=f"Match is already {match.status}.")
+
+    match.status = "cancelled"
+    await db.flush()
+
+    # Notify opponent
+    try:
+        opp_result = await db.execute(select(User).where(User.id == match.opponent_id))
+        opp = opp_result.scalar_one_or_none()
+        opp_name = opp.full_name if opp else "Opponent"
+        await _push_challenge_notification(
+            db=db,
+            user_id=match.opponent_id,
+            title="Challenge cancelled",
+            body=f"{current_user.full_name} cancelled their challenge invite.",
+            data={"match_id": str(match_id), "type": "challenge_cancelled"},
+            notif_type="challenge_cancelled",
+        )
+    except Exception as e:
+        logger.warning(f"Cancel notification failed: {e}")
+
+    return {"status": "cancelled"}
+
+
+@router.get("/matches/{match_id}/room-token")
+async def get_room_token(
+    match_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return a fresh challenge room URL/token for an active match."""
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+    if match.challenger_id != current_user.id and match.opponent_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not a participant in this match.")
+    if match.status not in ("active", "pending"):
+        raise HTTPException(status_code=400, detail=f"Match is {match.status}.")
+
+    from app.services.challenge_link_service import generate_challenge_link
+    room_url = match.challenge_link or generate_challenge_link(match.id)
+    return {"room_url": room_url, "match_id": str(match_id)}
 
 
 @router.get("/matches")
@@ -470,6 +570,89 @@ async def get_match(
     if not match:
         raise HTTPException(status_code=404, detail="Match not found.")
     return _serialize_match(match)
+
+
+@router.post("/matches/{match_id}/run")
+async def run_sample_tests(
+    match_id: UUID,
+    payload: RunSampleRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Execute code against sample test cases only (not hidden suite).
+    Returns pass/fail per sample test. No score impact.
+    """
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+    if match.challenger_id != current_user.id and match.opponent_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not a participant.")
+
+    # Get task for sample I/O
+    task = match.challenge_task
+    if not task:
+        return [{"status": "no_task", "stdout": "", "stderr": "No task assigned.", "passed": False}]
+
+    from app.services.challenge_evaluation_service import LANGUAGE_IDS, JUDGE0_URL, JUDGE0_HEADERS
+    import httpx
+
+    lang_id = LANGUAGE_IDS.get(payload.language or "python", 71)
+    api_key = getattr(__import__('app.core.config', fromlist=['settings']).settings, 'judge0_api_key', '')
+
+    # Build sample test cases from task fields
+    samples = []
+    if hasattr(task, 'sample_input_1') and task.sample_input_1:
+        samples.append({
+            "input": task.sample_input_1,
+            "expected": getattr(task, 'sample_output_1', '') or '',
+        })
+    if hasattr(task, 'sample_input_2') and task.sample_input_2:
+        samples.append({
+            "input": task.sample_input_2,
+            "expected": getattr(task, 'sample_output_2', '') or '',
+        })
+
+    # Fallback: use description as context, run without I/O check
+    if not samples:
+        return [{"status": "no_samples", "stdout": "No sample test cases available for this task.", "stderr": "", "passed": True}]
+
+    if not api_key:
+        # No Judge0 key — return mock pass
+        return [{"status": "accepted", "stdout": "Sample test passed (mock).", "stderr": "", "passed": True} for _ in samples]
+
+    results = []
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            for sample in samples:
+                resp = await client.post(
+                    f"{JUDGE0_URL}/submissions",
+                    headers=JUDGE0_HEADERS,
+                    json={
+                        "source_code": payload.content,
+                        "language_id": lang_id,
+                        "stdin": sample["input"],
+                        "expected_output": sample["expected"],
+                        "cpu_time_limit": 5,
+                        "memory_limit": 256000,
+                    },
+                    params={"base64_encoded": "false", "wait": "true"},
+                )
+                data = resp.json()
+                status_id = data.get("status", {}).get("id", 0)
+                passed = status_id == 3  # Accepted
+                results.append({
+                    "status": data.get("status", {}).get("description", "Unknown"),
+                    "stdout": (data.get("stdout") or "")[:500],
+                    "stderr": (data.get("stderr") or data.get("compile_output") or "")[:300],
+                    "passed": passed,
+                })
+    except Exception as e:
+        logger.warning(f"Judge0 run failed: {e}")
+        results = [{"status": "error", "stdout": "", "stderr": str(e)[:200], "passed": False}]
+
+    return results
 
 
 @router.post("/matches/{match_id}/submit")
