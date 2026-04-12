@@ -51,10 +51,24 @@ def _init_sentry() -> None:
             logger.warning("sentry-sdk not installed, skipping Sentry init")
 
 
+def _run_migrations() -> None:
+    """Run pending Alembic migrations on startup."""
+    try:
+        from alembic.config import Config
+        from alembic import command
+        import os
+        alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied successfully")
+    except Exception as e:
+        logger.error(f"Migration failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_sentry()
     init_firebase()
+    _run_migrations()
     async with engine.connect() as conn:
         await conn.execute(__import__('sqlalchemy').text("SELECT 1"))
     try:

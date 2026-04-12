@@ -4,6 +4,7 @@ services:
     runtime: docker
     plan: free
     healthCheckPath: /
+    preDeployCommand: "alembic upgrade head"
     envVars:
       - key: DATABASE_URL
         sync: false
