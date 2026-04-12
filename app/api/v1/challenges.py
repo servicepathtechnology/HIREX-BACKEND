@@ -565,11 +565,17 @@ async def get_match(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    result = await db.execute(select(Match).where(Match.id == match_id))
-    match = result.scalar_one_or_none()
-    if not match:
-        raise HTTPException(status_code=404, detail="Match not found.")
-    return _serialize_match(match)
+    # Retry up to 3 times with a short delay to handle post-creation race conditions
+    import asyncio as _asyncio
+    for attempt in range(3):
+        result = await db.execute(select(Match).where(Match.id == match_id))
+        match = result.scalar_one_or_none()
+        if match:
+            return _serialize_match(match)
+        if attempt < 2:
+            await _asyncio.sleep(0.5)
+            await db.expire_all()  # clear session cache so next query hits DB
+    raise HTTPException(status_code=404, detail="Match not found.")
 
 
 @router.post("/matches/{match_id}/run")
