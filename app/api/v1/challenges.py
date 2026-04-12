@@ -325,26 +325,26 @@ async def accept_invite(
         await _push_challenge_notification(
             db=db,
             user_id=match.challenger_id,
-            title="Challenge accepted!",
+            title="Challenge accepted! 🎯",
             body=f"{current_user.full_name} accepted your challenge. Get ready!",
             data={
                 "match_id": str(match_id),
                 "type": "challenge_accepted",
-                "challenge_link": match.challenge_link,
+                "challenge_link": match.challenge_link or "",
             },
             notif_type="challenge_accepted",
         )
-        # Notify both: match starting — include link so both can open it
+        # Notify both players: match starting — include link so both can open it
         for uid in (match.challenger_id, match.opponent_id):
             await _push_challenge_notification(
                 db=db,
                 user_id=uid,
-                title="Match starting in 60 seconds!",
-                body="Your match starts in 60 seconds. Head to the room!",
+                title="⚡ Match starting now!",
+                body="Your 1v1 challenge is live. Open the challenge room!",
                 data={
                     "match_id": str(match_id),
                     "type": "match_starting",
-                    "challenge_link": match.challenge_link,
+                    "challenge_link": match.challenge_link or "",
                 },
                 notif_type="match_starting",
             )
@@ -386,8 +386,12 @@ async def decline_invite(
             db=db,
             user_id=match.challenger_id,
             title="Challenge declined",
-            body=f"{current_user.full_name} declined your challenge.",
-            data={"match_id": str(match_id), "type": "challenge_declined"},
+            body=f"{current_user.full_name} is not ready right now and declined your challenge.",
+            data={
+                "match_id": str(match_id),
+                "type": "challenge_declined",
+                "opponent_name": current_user.full_name or "Opponent",
+            },
             notif_type="challenge_declined",
         )
     except Exception as e:
