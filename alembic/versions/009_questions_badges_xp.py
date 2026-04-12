@@ -111,21 +111,26 @@ def upgrade() -> None:
         "CREATE INDEX IF NOT EXISTS idx_user_badges_user ON user_challenge_badges(user_id)"
     ))
 
-    # 8. Seed badge definitions — use dollar-quoted strings to avoid SQLAlchemy
-    #    treating colons inside JSON as bind parameters
-    conn.execute(sa.text("""
-        INSERT INTO challenge_badges (slug, name, description, condition)
-        VALUES
-          ('coding_warrior',   'Coding Warrior',   'Won an Easy 1v1 coding challenge',    '{"type":"win_difficulty","difficulty":"easy"}'::jsonb),
-          ('code_crusher',     'Code Crusher',     'Won a Medium 1v1 coding challenge',   '{"type":"win_difficulty","difficulty":"medium"}'::jsonb),
-          ('algorithm_master', 'Algorithm Master', 'Won a Hard 1v1 coding challenge',     '{"type":"win_difficulty","difficulty":"hard"}'::jsonb),
-          ('first_blood',      'First Blood',      'Won your very first 1v1 challenge',   '{"type":"first_win"}'::jsonb),
-          ('win_streak_3',     'Hat Trick',        '3 consecutive 1v1 wins',              '{"type":"win_streak","threshold":3}'::jsonb),
-          ('win_streak_5',     'Unstoppable',      '5 consecutive 1v1 wins',              '{"type":"win_streak","threshold":5}'::jsonb),
-          ('speed_demon',      'Speed Demon',      'Won with >80 pct score in under 10 min', '{"type":"speed_win","score_threshold":80,"time_threshold_sec":600}'::jsonb),
-          ('domain_master',    'Domain Master',    '10 total wins in coding',             '{"type":"total_wins","threshold":10}'::jsonb)
-        ON CONFLICT (slug) DO NOTHING
-    """))
+    # 8. Seed badge definitions — insert one row at a time to avoid SQLAlchemy
+    #    misinterpreting colons inside JSON strings as named bind parameters.
+    _badges = [
+        ("coding_warrior",   "Coding Warrior",   "Won an Easy 1v1 coding challenge",          '{"type":"win_difficulty","difficulty":"easy"}'),
+        ("code_crusher",     "Code Crusher",     "Won a Medium 1v1 coding challenge",         '{"type":"win_difficulty","difficulty":"medium"}'),
+        ("algorithm_master", "Algorithm Master", "Won a Hard 1v1 coding challenge",           '{"type":"win_difficulty","difficulty":"hard"}'),
+        ("first_blood",      "First Blood",      "Won your very first 1v1 challenge",         '{"type":"first_win"}'),
+        ("win_streak_3",     "Hat Trick",        "3 consecutive 1v1 wins",                    '{"type":"win_streak","threshold":3}'),
+        ("win_streak_5",     "Unstoppable",      "5 consecutive 1v1 wins",                    '{"type":"win_streak","threshold":5}'),
+        ("speed_demon",      "Speed Demon",      "Won with >80 pct score in under 10 min",    '{"type":"speed_win","score_threshold":80,"time_threshold_sec":600}'),
+        ("domain_master",    "Domain Master",    "10 total wins in coding",                   '{"type":"total_wins","threshold":10}'),
+    ]
+    for slug, name, desc, cond in _badges:
+        conn.execute(
+            sa.text(
+                "INSERT INTO challenge_badges (slug, name, description, condition) "
+                "VALUES (:slug, :name, :desc, :cond::jsonb) "
+                "ON CONFLICT (slug) DO NOTHING"
+            ).bindparams(slug=slug, name=name, desc=desc, cond=cond)
+        )
 
 
 def downgrade() -> None:
