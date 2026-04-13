@@ -206,6 +206,28 @@ async def _push_challenge_notification(
         logger.debug(f"FCM task scheduling failed (non-critical): {e}")
 
 
+async def _send_fcm_push_background(
+    user_id: UUID,
+    title: str,
+    body: str,
+    data: dict,
+) -> None:
+    """Send FCM push in a fresh DB session. Called as a BackgroundTask after commit."""
+    try:
+        async with AsyncSessionLocal() as db:
+            from backend.notifications.fcm_service import send_push_notification
+            await send_push_notification(
+                db=db,
+                user_id=user_id,
+                title=title,
+                body=body,
+                data=data,
+                notif_type=data.get("type", ""),
+            )
+    except Exception as e:
+        logger.warning(f"FCM push failed for {user_id}: {e}")
+
+
 async def _send_fcm_after_commit(
     user_id: UUID,
     title: str,
@@ -297,11 +319,13 @@ async def send_invite(
     result = await db.execute(select(Match).where(Match.id == match.id))
     match = result.scalar_one()
 
-    # In-app + FCM notification to opponent — wrapped so it never rolls back the match
+    # Create in-app notification (within this transaction)
     try:
-        await _push_challenge_notification(
+        from app.services.notification_service import create_notification
+        await create_notification(
             db=db,
             user_id=opponent_uuid,
+            notif_type="challenge_invite",
             title=f"{current_user.full_name} challenged you!",
             body=f"{current_user.full_name} challenged you to a 1v1 Coding challenge ({payload.difficulty.title()})",
             data={
@@ -314,14 +338,35 @@ async def send_invite(
                 "duration_minutes": str(payload.duration_minutes),
                 "invite_message": payload.invite_message or "",
             },
-            notif_type="challenge_invite",
         )
     except Exception as e:
-        logger.warning(f"Notification failed for match {match.id}: {e}")
-        # Don't re-raise — match must be saved regardless
+        logger.warning(f"In-app notification failed for match {match.id}: {e}")
+
+    # COMMIT NOW so the match is visible to all DB instances before FCM fires
+    await db.commit()
+
+    # Send FCM push AFTER commit via BackgroundTask (runs after response is sent)
+    match_id_str = str(match.id)
+    fcm_data = {
+        "match_id": match_id_str,
+        "type": "challenge_invite",
+        "challenger_name": current_user.full_name or "",
+        "challenger_avatar": current_user.avatar_url or "",
+        "domain": payload.domain,
+        "difficulty": payload.difficulty,
+        "duration_minutes": str(payload.duration_minutes),
+        "invite_message": payload.invite_message or "",
+    }
+    background_tasks.add_task(
+        _send_fcm_push_background,
+        user_id=opponent_uuid,
+        title=f"{current_user.full_name} challenged you!",
+        body=f"{current_user.full_name} challenged you to a 1v1 Coding challenge ({payload.difficulty.title()})",
+        data=fcm_data,
+    )
 
     # Schedule expiry (non-blocking background task)
-    background_tasks.add_task(_expire_match_after_24h, str(match.id))
+    background_tasks.add_task(_expire_match_after_24h, match_id_str)
 
     return _serialize_match(match)
 
@@ -356,42 +401,58 @@ async def accept_invite(
     # Generate and persist the external challenge room link
     from app.services.challenge_link_service import generate_challenge_link
     match.challenge_link = generate_challenge_link(match.id)
+    challenge_link = match.challenge_link
+    challenger_id = match.challenger_id
+    opponent_id = match.opponent_id
+    duration_minutes = match.duration_minutes
     await db.flush()
 
-    # Notify challenger: accepted — include challenge_link in notification data
+    # Create in-app notifications within this transaction
     try:
-        await _push_challenge_notification(
+        from app.services.notification_service import create_notification
+        await create_notification(
             db=db,
-            user_id=match.challenger_id,
+            user_id=challenger_id,
+            notif_type="challenge_accepted",
             title="Challenge accepted! 🎯",
             body=f"{current_user.full_name} accepted your challenge. Get ready!",
-            data={
-                "match_id": str(match_id),
-                "type": "challenge_accepted",
-                "challenge_link": match.challenge_link or "",
-            },
-            notif_type="challenge_accepted",
+            data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenge_link or ""},
         )
-        # Notify both players: match starting — include link so both can open it
-        for uid in (match.challenger_id, match.opponent_id):
-            await _push_challenge_notification(
+        for uid in (challenger_id, opponent_id):
+            await create_notification(
                 db=db,
                 user_id=uid,
+                notif_type="match_starting",
                 title="⚡ Match starting now!",
                 body="Your 1v1 challenge is live. Open the challenge room!",
-                data={
-                    "match_id": str(match_id),
-                    "type": "match_starting",
-                    "challenge_link": match.challenge_link or "",
-                },
-                notif_type="match_starting",
+                data={"match_id": str(match_id), "type": "match_starting", "challenge_link": challenge_link or ""},
             )
     except Exception as e:
-        logger.warning(f"Accept notification failed: {e}")
+        logger.warning(f"Accept in-app notification failed: {e}")
+
+    # COMMIT NOW so the match is visible before FCM fires
+    await db.commit()
+
+    # Send FCM pushes AFTER commit via BackgroundTasks
+    background_tasks.add_task(
+        _send_fcm_push_background,
+        user_id=challenger_id,
+        title="Challenge accepted! 🎯",
+        body=f"{current_user.full_name} accepted your challenge. Get ready!",
+        data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenge_link or ""},
+    )
+    for uid in (challenger_id, opponent_id):
+        background_tasks.add_task(
+            _send_fcm_push_background,
+            user_id=uid,
+            title="⚡ Match starting now!",
+            body="Your 1v1 challenge is live. Open the challenge room!",
+            data={"match_id": str(match_id), "type": "match_starting", "challenge_link": challenge_link or ""},
+        )
 
     # Broadcast timer_start via WebSocket (non-blocking)
     background_tasks.add_task(
-        _broadcast_match_start, str(match_id), match.duration_minutes
+        _broadcast_match_start, str(match_id), duration_minutes
     )
 
     # Reload with relationships
