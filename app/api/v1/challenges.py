@@ -304,7 +304,16 @@ async def send_invite(
             user_id=opponent_uuid,
             title=f"{current_user.full_name} challenged you!",
             body=f"{current_user.full_name} challenged you to a 1v1 Coding challenge ({payload.difficulty.title()})",
-            data={"match_id": str(match.id), "type": "challenge_invite"},
+            data={
+                "match_id": str(match.id),
+                "type": "challenge_invite",
+                "challenger_name": current_user.full_name or "",
+                "challenger_avatar": current_user.avatar_url or "",
+                "domain": payload.domain,
+                "difficulty": payload.difficulty,
+                "duration_minutes": str(payload.duration_minutes),
+                "invite_message": payload.invite_message or "",
+            },
             notif_type="challenge_invite",
         )
     except Exception as e:
@@ -566,14 +575,19 @@ async def get_match(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     import asyncio as _asyncio
-    for attempt in range(3):
+    # Retry up to 6 times with increasing delay to handle multi-instance read-after-write lag
+    delays = [0.3, 0.6, 1.0, 1.5, 2.0, 2.5]
+    for attempt, delay in enumerate(delays):
+        db.expire_all()  # clear session cache so we always hit the DB
         result = await db.execute(select(Match).where(Match.id == match_id))
         match = result.scalar_one_or_none()
         if match:
+            # Verify the requesting user is a participant or the match is accessible
+            if match.challenger_id != current_user.id and match.opponent_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Not a participant.")
             return _serialize_match(match)
-        if attempt < 2:
-            await _asyncio.sleep(0.5)
-            db.expire_all()  # synchronous — clears session cache so next query hits DB
+        if attempt < len(delays) - 1:
+            await _asyncio.sleep(delay)
     raise HTTPException(status_code=404, detail="Match not found.")
 
 
