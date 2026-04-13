@@ -5,7 +5,6 @@ Revises: 009
 """
 from alembic import op
 import sqlalchemy as sa
-import json
 
 revision = "010"
 down_revision = "009"
@@ -43,6 +42,25 @@ HARD = [
 
 def upgrade() -> None:
     conn = op.get_bind()
+
+    # Use a table construct so SQLAlchemy handles type coercion
+    questions_table = sa.table(
+        "questions",
+        sa.column("title", sa.String),
+        sa.column("difficulty", sa.String),
+        sa.column("problem_statement", sa.Text),
+        sa.column("constraints", sa.Text),
+        sa.column("input_format", sa.Text),
+        sa.column("output_format", sa.Text),
+        sa.column("sample_input_1", sa.Text),
+        sa.column("sample_output_1", sa.Text),
+        sa.column("sample_input_2", sa.Text),
+        sa.column("sample_output_2", sa.Text),
+        sa.column("test_cases", sa.JSON),
+        sa.column("tags", sa.ARRAY(sa.String)),
+        sa.column("is_active", sa.Boolean),
+    )
+
     all_questions = (
         [(q, "easy") for q in EASY] +
         [(q, "medium") for q in MEDIUM] +
@@ -52,22 +70,30 @@ def upgrade() -> None:
         (title, problem_statement, constraints, input_format, output_format,
          sample_input_1, sample_output_1, sample_input_2, sample_output_2,
          test_cases, tags) = q
-        conn.execute(sa.text("""
-            INSERT INTO questions (title, difficulty, problem_statement, constraints,
-                input_format, output_format, sample_input_1, sample_output_1,
-                sample_input_2, sample_output_2, test_cases, tags, is_active)
-            VALUES (:title, :difficulty, :problem_statement, :constraints,
-                :input_format, :output_format, :sample_input_1, :sample_output_1,
-                :sample_input_2, :sample_output_2, CAST(:test_cases AS jsonb), CAST(:tags AS jsonb), true)
-            ON CONFLICT DO NOTHING
-        """), {
-            "title": title, "difficulty": diff,
-            "problem_statement": problem_statement, "constraints": constraints,
-            "input_format": input_format, "output_format": output_format,
-            "sample_input_1": sample_input_1, "sample_output_1": sample_output_1,
-            "sample_input_2": sample_input_2, "sample_output_2": sample_output_2,
-            "test_cases": json.dumps(test_cases), "tags": json.dumps(tags),
-        })
+        # Check if already exists to avoid conflict
+        exists = conn.execute(
+            sa.text("SELECT 1 FROM questions WHERE title = :title"),
+            {"title": title}
+        ).fetchone()
+        if exists:
+            continue
+        conn.execute(
+            questions_table.insert().values(
+                title=title,
+                difficulty=diff,
+                problem_statement=problem_statement,
+                constraints=constraints,
+                input_format=input_format,
+                output_format=output_format,
+                sample_input_1=sample_input_1,
+                sample_output_1=sample_output_1,
+                sample_input_2=sample_input_2,
+                sample_output_2=sample_output_2,
+                test_cases=test_cases,
+                tags=tags,
+                is_active=True,
+            )
+        )
 
 def downgrade() -> None:
     conn = op.get_bind()
