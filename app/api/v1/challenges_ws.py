@@ -109,15 +109,30 @@ async def challenge_room_ws(
     match_id: str,
     token: str = Query(...),
 ) -> None:
-    # ── Auth ──────────────────────────────────────────────────────────────────
+    # ── Auth — accept both Firebase JWT and challenge JWT ─────────────────────
+    user_id: str | None = None
     async with AsyncSessionLocal() as db:
-        try:
-            user = await verify_token(token, db)
-        except Exception:
-            await websocket.close(code=4001)
-            return
+        from sqlalchemy import select
 
-        user_id = str(user.id)
+        # First try challenge JWT (used by the web room app)
+        try:
+            from app.services.challenge_link_service import verify_challenge_token
+            payload = verify_challenge_token(token)
+            token_match_id = payload.get("match_id")
+            token_user_id = payload.get("user_id")
+            if token_match_id == match_id and token_user_id:
+                user_id = token_user_id
+        except Exception:
+            pass
+
+        # Fall back to Firebase JWT (used by the Flutter app)
+        if not user_id:
+            try:
+                user = await verify_token(token, db)
+                user_id = str(user.id)
+            except Exception:
+                await websocket.close(code=4001)
+                return
 
         try:
             match_uuid = UUID(match_id)
@@ -125,7 +140,6 @@ async def challenge_room_ws(
             await websocket.close(code=4004)
             return
 
-        from sqlalchemy import select
         result = await db.execute(select(Match).where(Match.id == match_uuid))
         match = result.scalar_one_or_none()
 
