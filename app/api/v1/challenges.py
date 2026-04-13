@@ -399,9 +399,13 @@ async def accept_invite(
     await db.flush()
 
     # Generate and persist the external challenge room link
-    from app.services.challenge_link_service import generate_challenge_link
-    match.challenge_link = generate_challenge_link(match.id)
-    challenge_link = match.challenge_link
+    from app.services.challenge_link_service import generate_challenge_link_for_user
+    # Generate user-specific links so each user's token has their user_id
+    challenger_link = generate_challenge_link_for_user(match.id, match.challenger_id)
+    opponent_link = generate_challenge_link_for_user(match.id, match.opponent_id)
+    # Store the challenger's link as the canonical challenge_link (for backwards compat)
+    match.challenge_link = challenger_link
+    challenge_link = challenger_link
     challenger_id = match.challenger_id
     opponent_id = match.opponent_id
     duration_minutes = match.duration_minutes
@@ -416,16 +420,16 @@ async def accept_invite(
             notif_type="challenge_accepted",
             title="Challenge accepted! 🎯",
             body=f"{current_user.full_name} accepted your challenge. Get ready!",
-            data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenge_link or ""},
+            data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenger_link},
         )
-        for uid in (challenger_id, opponent_id):
+        for uid, link in [(challenger_id, challenger_link), (opponent_id, opponent_link)]:
             await create_notification(
                 db=db,
                 user_id=uid,
                 notif_type="match_starting",
                 title="⚡ Match starting now!",
                 body="Your 1v1 challenge is live. Open the challenge room!",
-                data={"match_id": str(match_id), "type": "match_starting", "challenge_link": challenge_link or ""},
+                data={"match_id": str(match_id), "type": "match_starting", "challenge_link": link},
             )
     except Exception as e:
         logger.warning(f"Accept in-app notification failed: {e}")
@@ -439,15 +443,15 @@ async def accept_invite(
         user_id=challenger_id,
         title="Challenge accepted! 🎯",
         body=f"{current_user.full_name} accepted your challenge. Get ready!",
-        data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenge_link or ""},
+        data={"match_id": str(match_id), "type": "challenge_accepted", "challenge_link": challenger_link},
     )
-    for uid in (challenger_id, opponent_id):
+    for uid, link in [(challenger_id, challenger_link), (opponent_id, opponent_link)]:
         background_tasks.add_task(
             _send_fcm_push_background,
             user_id=uid,
             title="⚡ Match starting now!",
             body="Your 1v1 challenge is live. Open the challenge room!",
-            data={"match_id": str(match_id), "type": "match_starting", "challenge_link": challenge_link or ""},
+            data={"match_id": str(match_id), "type": "match_starting", "challenge_link": link},
         )
 
     # Broadcast timer_start via WebSocket (non-blocking)
@@ -650,6 +654,103 @@ async def get_match(
         if attempt < len(delays) - 1:
             await _asyncio.sleep(delay)
     raise HTTPException(status_code=404, detail="Match not found.")
+
+
+@router.get("/room/{match_id}")
+async def get_room_match(
+    match_id: UUID,
+    token: str = Query(..., description="Challenge room JWT"),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Public endpoint for the challenge room web app.
+    Authenticated via the challenge JWT (not Firebase).
+    Returns match + task data needed to render the room.
+    """
+    from app.services.challenge_link_service import verify_challenge_token
+    from jose import JWTError
+    try:
+        payload = verify_challenge_token(token)
+        token_match_id = payload.get("match_id")
+        if str(match_id) != token_match_id:
+            raise HTTPException(status_code=403, detail="Token does not match match ID.")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired challenge token.")
+
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+
+    return _serialize_match(match)
+
+
+@router.post("/room/{match_id}/submit")
+async def room_submit_answer(
+    match_id: UUID,
+    payload: SubmitAnswerRequest,
+    token: str = Query(..., description="Challenge room JWT"),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Submit answer from the challenge room web app.
+    Authenticated via challenge JWT. Identifies the submitter from the token's match_id
+    and the user_id embedded in the token (set at accept time).
+    """
+    from app.services.challenge_link_service import verify_challenge_token
+    from jose import JWTError
+    try:
+        token_payload = verify_challenge_token(token)
+        token_match_id = token_payload.get("match_id")
+        if str(match_id) != token_match_id:
+            raise HTTPException(status_code=403, detail="Token does not match match ID.")
+        user_id_str = token_payload.get("user_id")
+        if not user_id_str:
+            raise HTTPException(status_code=401, detail="Token missing user_id.")
+        user_id = UUID(user_id_str)
+    except (JWTError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid or expired challenge token.")
+
+    result = await db.execute(select(Match).where(Match.id == match_id))
+    match = result.scalar_one_or_none()
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found.")
+    if match.challenger_id != user_id and match.opponent_id != user_id:
+        raise HTTPException(status_code=403, detail="Not a participant.")
+    if match.status != "active":
+        raise HTTPException(status_code=400, detail=f"Match is {match.status}.")
+
+    # Check for existing submission
+    existing = await db.execute(
+        select(ChallengeSubmission).where(
+            ChallengeSubmission.match_id == match_id,
+            ChallengeSubmission.user_id == user_id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Already submitted.")
+
+    submission = ChallengeSubmission(
+        match_id=match_id,
+        user_id=user_id,
+        content=payload.content,
+        language=payload.language,
+        is_auto=payload.is_auto,
+    )
+    db.add(submission)
+    await db.flush()
+    await db.commit()
+
+    # Trigger evaluation in background
+    background_tasks.add_task(_evaluate_now, str(match_id))
+
+    return {
+        "id": str(submission.id),
+        "match_id": str(match_id),
+        "user_id": str(user_id),
+        "submitted_at": submission.submitted_at.isoformat(),
+    }
 
 
 @router.post("/matches/{match_id}/run")
