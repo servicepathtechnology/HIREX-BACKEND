@@ -58,7 +58,7 @@ def upgrade() -> None:
                 sample_input_2, sample_output_2, test_cases, tags, is_active)
             VALUES (:title, :difficulty, :problem_statement, :constraints,
                 :input_format, :output_format, :sample_input_1, :sample_output_1,
-                :sample_input_2, :sample_output_2, :test_cases::jsonb, :tags::jsonb, true)
+                :sample_input_2, :sample_output_2, CAST(:test_cases AS jsonb), CAST(:tags AS jsonb), true)
             ON CONFLICT DO NOTHING
         """), {
             "title": title, "difficulty": diff,
