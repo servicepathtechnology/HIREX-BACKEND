@@ -77,6 +77,7 @@ class Match(Base):
     invite_message = Column(String(200), nullable=True)
     decline_reason = Column(String(100), nullable=True)
     challenge_link = Column(Text, nullable=True)
+    question_id = Column(UUID(as_uuid=True), ForeignKey("questions.id"), nullable=True)
     spectator_count = Column(Integer, default=0, nullable=False)
     winner_points = Column(Integer, default=0, nullable=True)
     challenge_badge = Column(String(50), nullable=True)
@@ -88,6 +89,7 @@ class Match(Base):
     opponent = relationship("User", foreign_keys=[opponent_id], lazy="selectin")
     winner = relationship("User", foreign_keys=[winner_id], lazy="selectin")
     challenge_task = relationship("ChallengeTask", back_populates="matches", lazy="selectin")
+    question = relationship("Question", foreign_keys=[question_id], lazy="selectin")
     submissions = relationship("ChallengeSubmission", back_populates="match", lazy="selectin")
 
 

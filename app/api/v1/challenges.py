@@ -87,8 +87,14 @@ DECLINE_REASONS = [
 def _serialize_match(match: Match) -> dict:
     """Serialize a Match ORM object. All relationships must be eagerly loaded."""
     task = match.challenge_task
+    question = getattr(match, 'question', None)
     challenger = match.challenger
     opponent = match.opponent
+
+    # Use Question data if available, fall back to ChallengeTask
+    task_title = (question.title if question else None) or (task.title if task else None)
+    task_description = (question.problem_statement if question else None) or (task.description if task else None)
+    task_requirements = (question.constraints if question else None) or (task.requirements if task else None)
 
     return {
         "id": str(match.id),
@@ -96,6 +102,7 @@ def _serialize_match(match: Match) -> dict:
         "opponent_id": str(match.opponent_id),
         "domain": match.domain,
         "task_id": str(match.task_id) if match.task_id else None,
+        "question_id": str(match.question_id) if match.question_id else None,
         "duration_minutes": match.duration_minutes,
         "status": match.status,
         "started_at": match.started_at.isoformat() if match.started_at else None,
@@ -110,9 +117,26 @@ def _serialize_match(match: Match) -> dict:
         "opponent_name": opponent.full_name if opponent else None,
         "challenger_avatar_url": challenger.avatar_url if challenger else None,
         "opponent_avatar_url": opponent.avatar_url if opponent else None,
-        "task_title": task.title if task else None,
-        "task_description": task.description if task else None,
-        "task_requirements": task.requirements if task else None,
+        "task_title": task_title,
+        "task_description": task_description,
+        "task_requirements": task_requirements,
+        # Full question data for the challenge room
+        "question": {
+            "id": str(question.id),
+            "title": question.title,
+            "difficulty": question.difficulty,
+            "problem_statement": question.problem_statement,
+            "constraints": question.constraints,
+            "input_format": question.input_format,
+            "output_format": question.output_format,
+            "sample_input_1": question.sample_input_1,
+            "sample_output_1": question.sample_output_1,
+            "sample_input_2": question.sample_input_2,
+            "sample_output_2": question.sample_output_2,
+            "time_limit_ms": question.time_limit_ms,
+            "memory_limit_mb": question.memory_limit_mb,
+            "tags": question.tags or [],
+        } if question else None,
         "invite_message": match.invite_message,
         "decline_reason": match.decline_reason,
         "challenge_link": match.challenge_link,
@@ -167,6 +191,22 @@ async def _get_random_task(db: AsyncSession, domain: str, difficulty: str = "eas
             ChallengeTask.domain == domain,
             ChallengeTask.difficulty == difficulty,
             ChallengeTask.is_active.is_(True),
+        )
+        .order_by(func.random())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_random_question(db: AsyncSession, difficulty: str = "easy"):
+    """Get a random active Question for the given difficulty."""
+    from sqlalchemy import func
+    from app.models.challenges import Question
+    result = await db.execute(
+        select(Question)
+        .where(
+            Question.difficulty == difficulty,
+            Question.is_active.is_(True),
         )
         .order_by(func.random())
         .limit(1)
@@ -300,12 +340,16 @@ async def send_invite(
     # Auto-assign a random task for the domain and difficulty
     task = await _get_random_task(db, payload.domain, payload.difficulty)
 
+    # Also assign a random Question (coding problem with test cases)
+    question = await _get_random_question(db, payload.difficulty)
+
     match = Match(
         challenger_id=current_user.id,
         opponent_id=opponent_uuid,
         domain=payload.domain,
         difficulty=payload.difficulty,
         task_id=task.id if task else None,
+        question_id=question.id if question else None,
         duration_minutes=payload.duration_minutes,
         status="pending",
         challenger_elo_before=c_elo.elo,
