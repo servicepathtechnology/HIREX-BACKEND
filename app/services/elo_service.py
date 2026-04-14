@@ -14,6 +14,10 @@ from app.services.redis_service import RedisService
 from app.services.notification_service import NotificationService
 
 
+# Starting ELO for new users
+STARTING_ELO = 1000
+
+
 # K-factors by tier — higher K = more volatile ELO changes
 K_FACTORS = {
     "bronze": 32,
@@ -318,3 +322,60 @@ class EloService:
             body=body,
             data={"screen": "tier_detail", "tier": tier_to, "elo": str(elo)}
         )
+
+
+
+# ── Standalone helper functions ──────────────────────────────────────────────
+
+async def get_or_create_elo(db: AsyncSession, user_id: uuid.UUID) -> UserElo:
+    """Get or create UserElo record for a user.
+    
+    Args:
+        db: Database session
+        user_id: User ID
+        
+    Returns:
+        UserElo record
+    """
+    result = await db.execute(
+        select(UserElo).where(UserElo.user_id == user_id)
+    )
+    user_elo = result.scalar_one_or_none()
+    
+    if not user_elo:
+        # Create new ELO record with starting values
+        user_elo = UserElo(
+            user_id=user_id,
+            elo=STARTING_ELO,
+            tier="silver",
+            coding_elo=STARTING_ELO,
+            matches_played=0,
+            wins=0,
+            losses=0,
+            draws=0,
+            peak_elo=STARTING_ELO,
+            current_streak=0,
+            weekly_elo_gain=0,
+            monthly_elo_gain=0,
+            placement_matches_done=0,
+            is_placement_complete=False,
+        )
+        db.add(user_elo)
+        await db.flush()
+    
+    return user_elo
+
+
+def _tier_from_elo(elo: int) -> str:
+    """Map ELO score to tier name.
+    
+    Args:
+        elo: ELO score
+        
+    Returns:
+        Tier name (bronze, silver, gold, platinum, diamond, elite)
+    """
+    for threshold, tier in TIER_THRESHOLDS:
+        if elo >= threshold:
+            return tier
+    return "bronze"
