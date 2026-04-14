@@ -41,7 +41,7 @@ async def test_redis():
         
         # Get range
         top_users = await redis.zrevrange("test_leaderboard", 0, 2, withscores=True)
-        if len(top_users) == 6:  # 3 users * 2 (user_id + score)
+        if len(top_users) == 3:  # 3 tuples of (user_id, score)
             print("   ✅ Sorted set range query works!")
         else:
             print(f"   ❌ Sorted set range query failed! Got: {top_users}")
