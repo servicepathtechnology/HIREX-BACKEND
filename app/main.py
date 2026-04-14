@@ -36,6 +36,8 @@ from app.admin.admin_router import router as admin_router
 from app.api.v1.candidates import router as candidates_router
 from app.api.v1.challenges import router as challenges_router
 from app.api.v1.challenges_ws import ws_challenges_router
+# Part 2 — Solo Challenges (Daily/Weekly/Monthly)
+from app.api.v1.solo_challenges_api import router as solo_challenges_router
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +128,8 @@ app.include_router(admin_router)
 app.include_router(candidates_router, prefix="/api/v1")
 app.include_router(challenges_router, prefix="/api/v1")
 app.include_router(ws_challenges_router)
+# Part 2 — Solo Challenges
+app.include_router(solo_challenges_router, prefix="/api/v1")
 
 
 @app.get("/")
