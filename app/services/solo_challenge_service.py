@@ -10,6 +10,7 @@ from uuid import UUID
 
 from jose import jwt
 from sqlalchemy import select, func
+from sqlalchemy.orm import joinedload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -59,7 +60,9 @@ def build_solo_room_url(challenge_type: str, challenge_id: UUID, token: str) -> 
 async def get_or_assign_daily_question(db: AsyncSession, today: date) -> Optional[DailyChallenge]:
     """Get today's daily challenge, assigning one if not yet set."""
     result = await db.execute(
-        select(DailyChallenge).where(DailyChallenge.challenge_date == today)
+        select(DailyChallenge)
+        .options(joinedload(DailyChallenge.question))
+        .where(DailyChallenge.challenge_date == today)
     )
     daily = result.scalar_one_or_none()
     if daily:
@@ -79,12 +82,16 @@ async def get_or_assign_daily_question(db: AsyncSession, today: date) -> Optiona
         used_date=today,
     ))
     await db.flush()
+    # Refresh to load the question relationship
+    await db.refresh(daily, ["question"])
     return daily
 
 
 async def get_or_assign_weekly_question(db: AsyncSession, year: int, week: int) -> Optional[WeeklyChallenge]:
     result = await db.execute(
-        select(WeeklyChallenge).where(
+        select(WeeklyChallenge)
+        .options(joinedload(WeeklyChallenge.question))
+        .where(
             WeeklyChallenge.year == year,
             WeeklyChallenge.week_number == week,
         )
@@ -106,12 +113,16 @@ async def get_or_assign_weekly_question(db: AsyncSession, year: int, week: int) 
         used_date=date.today(),
     ))
     await db.flush()
+    # Refresh to load the question relationship
+    await db.refresh(weekly, ["question"])
     return weekly
 
 
 async def get_or_assign_monthly_question(db: AsyncSession, year: int, month: int) -> Optional[MonthlyChallenge]:
     result = await db.execute(
-        select(MonthlyChallenge).where(
+        select(MonthlyChallenge)
+        .options(joinedload(MonthlyChallenge.question))
+        .where(
             MonthlyChallenge.year == year,
             MonthlyChallenge.month == month,
         )
@@ -133,6 +144,8 @@ async def get_or_assign_monthly_question(db: AsyncSession, year: int, month: int
         used_date=date.today(),
     ))
     await db.flush()
+    # Refresh to load the question relationship
+    await db.refresh(monthly, ["question"])
     return monthly
 
 
