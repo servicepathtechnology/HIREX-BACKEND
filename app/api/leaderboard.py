@@ -22,7 +22,7 @@ from app.schemas.leaderboard import (
     SeasonResponse,
 )
 
-router = APIRouter(prefix="/api/leaderboard", tags=["leaderboard"])
+router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 redis_service = RedisService()
 
 

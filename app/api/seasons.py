@@ -12,7 +12,7 @@ from app.models.challenges import UserElo
 from app.models.leaderboard import Season, SeasonResult
 from app.schemas.leaderboard import SeasonResponse
 
-router = APIRouter(prefix="/api/seasons", tags=["seasons"])
+router = APIRouter(prefix="/seasons", tags=["seasons"])
 
 
 @router.get("/current", response_model=SeasonResponse)

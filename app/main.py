@@ -135,9 +135,9 @@ app.include_router(ws_challenges_router)
 # Part 2 — Solo Challenges
 app.include_router(solo_challenges_router, prefix="/api/v1")
 # Part 3 — Leaderboards + Tiers
-app.include_router(leaderboard_router)
-app.include_router(elo_router)
-app.include_router(seasons_router)
+app.include_router(leaderboard_router, prefix="/api/v1")
+app.include_router(elo_router, prefix="/api/v1")
+app.include_router(seasons_router, prefix="/api/v1")
 
 
 @app.get("/")

@@ -21,7 +21,7 @@ from app.schemas.leaderboard import (
     EloHistoryItem,
 )
 
-router = APIRouter(prefix="/api/elo", tags=["elo"])
+router = APIRouter(prefix="/elo", tags=["elo"])
 redis_service = RedisService()
 
 
