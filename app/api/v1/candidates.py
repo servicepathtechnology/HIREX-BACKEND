@@ -99,7 +99,7 @@ async def search_candidates(
     current_user: User = Depends(get_current_user),
 ) -> CandidateSearchResponse:
     """
-    Universal candidate search.
+    Universal candidate search for 1v1 challenge opponent selection.
 
     Supports:
     - Full name (partial, case-insensitive)
@@ -108,22 +108,22 @@ async def search_candidates(
     - Firebase UID (exact)
     - Referral code (exact, e.g. HIREX-AB12C)
 
-    Only returns active, onboarded candidates with public profiles.
+    Only returns active, onboarded users with role == 'candidate'.
+    Hiring partners (recruiters) are never included in results.
     Excludes the requesting user when exclude_self=true.
     """
     q = q.strip()
     users: list[User] = []
+
+    # ── Base filter: candidates only ──────────────────────────────────────────
+    _base = [User.is_active == True, User.onboarding_complete == True, User.role == "candidate"]
 
     # ── Strategy 1: Exact UUID lookup ─────────────────────────────────────────
     if _is_uuid(q):
         try:
             uid = uuid.UUID(q)
             result = await db.execute(
-                select(User).where(
-                    User.id == uid,
-                    User.is_active == True,
-                    User.onboarding_complete == True,
-                )
+                select(User).where(User.id == uid, *_base)
             )
             user = result.scalar_one_or_none()
             if user:
@@ -134,11 +134,7 @@ async def search_candidates(
     # ── Strategy 2: Exact email lookup ────────────────────────────────────────
     elif _is_email(q):
         result = await db.execute(
-            select(User).where(
-                func.lower(User.email) == q.lower(),
-                User.is_active == True,
-                User.onboarding_complete == True,
-            )
+            select(User).where(func.lower(User.email) == q.lower(), *_base)
         )
         user = result.scalar_one_or_none()
         if user:
@@ -147,11 +143,7 @@ async def search_candidates(
     # ── Strategy 3: Referral code lookup ─────────────────────────────────────
     elif _is_referral_code(q):
         result = await db.execute(
-            select(User).where(
-                func.upper(User.referral_code) == q.upper(),
-                User.is_active == True,
-                User.onboarding_complete == True,
-            )
+            select(User).where(func.upper(User.referral_code) == q.upper(), *_base)
         )
         user = result.scalar_one_or_none()
         if user:
@@ -160,11 +152,7 @@ async def search_candidates(
     # ── Strategy 4: Firebase UID (exact, long string, no spaces) ─────────────
     elif len(q) >= 20 and " " not in q and not _is_uuid(q):
         result = await db.execute(
-            select(User).where(
-                User.firebase_uid == q,
-                User.is_active == True,
-                User.onboarding_complete == True,
-            )
+            select(User).where(User.firebase_uid == q, *_base)
         )
         user = result.scalar_one_or_none()
         if user:
@@ -182,10 +170,8 @@ async def search_candidates(
     if exclude_self:
         users = [u for u in users if u.id != current_user.id]
 
-    # ── Exclude non-candidates (only show candidates for challenge search) ────
-    # Allow all roles so recruiters can also be challenged if they have a profile
-    # but filter out users with no role set (incomplete onboarding edge case)
-    users = [u for u in users if u.role is not None]
+    # ── Only return candidates — hiring partners must never appear in search ──
+    users = [u for u in users if u.role == "candidate"]
 
     results = [_build_result(u) for u in users[:limit]]
 
@@ -200,11 +186,10 @@ async def _name_search(db: AsyncSession, q: str, limit: int) -> list[User]:
     """
     Fuzzy name + partial email search using PostgreSQL ILIKE.
     Ranks exact-start matches above contains matches.
+    Only returns candidates (role == 'candidate').
     """
     pattern = f"%{q}%"
-    starts_with = f"{q}%"
 
-    # Fetch candidates matching name or email
     stmt = (
         select(User)
         .where(
@@ -214,6 +199,7 @@ async def _name_search(db: AsyncSession, q: str, limit: int) -> list[User]:
             ),
             User.is_active == True,
             User.onboarding_complete == True,
+            User.role == "candidate",
         )
         .limit(limit * 2)  # fetch extra to allow re-ranking
     )
