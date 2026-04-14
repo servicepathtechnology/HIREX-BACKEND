@@ -38,6 +38,10 @@ from app.api.v1.challenges import router as challenges_router
 from app.api.v1.challenges_ws import ws_challenges_router
 # Part 2 — Solo Challenges (Daily/Weekly/Monthly)
 from app.api.v1.solo_challenges_api import router as solo_challenges_router
+# Part 3 — Leaderboards + Tiers
+from app.api.leaderboard import router as leaderboard_router
+from app.api.elo import router as elo_router
+from app.api.seasons import router as seasons_router
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +134,10 @@ app.include_router(challenges_router, prefix="/api/v1")
 app.include_router(ws_challenges_router)
 # Part 2 — Solo Challenges
 app.include_router(solo_challenges_router, prefix="/api/v1")
+# Part 3 — Leaderboards + Tiers
+app.include_router(leaderboard_router)
+app.include_router(elo_router)
+app.include_router(seasons_router)
 
 
 @app.get("/")
