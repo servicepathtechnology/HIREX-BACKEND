@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, desc
 
 from app.core.database import get_db
-from app.core.auth import get_current_user
+from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.models.challenges import UserElo
 from app.models.leaderboard import EloEvent, TierHistory, Season, SeasonResult
