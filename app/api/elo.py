@@ -40,17 +40,41 @@ async def get_my_elo(
     if not user_elo:
         raise HTTPException(status_code=404, detail="ELO record not found")
     
-    # Get ranks from Redis
-    global_rank = await redis_service.zrevrank("lb:global", str(current_user.id))
-    global_rank = (global_rank + 1) if global_rank is not None else None
-    
+    # Get ranks from Redis or database
+    global_rank = None
     country_rank = None
-    if current_user.country:
-        country_rank = await redis_service.zrevrank(
-            f"lb:country:{current_user.country}",
-            str(current_user.id)
+    
+    if redis_service.is_available:
+        global_rank = await redis_service.zrevrank("lb:global", str(current_user.id))
+        global_rank = (global_rank + 1) if global_rank is not None else None
+        
+        if current_user.country:
+            country_rank = await redis_service.zrevrank(
+                f"lb:country:{current_user.country}",
+                str(current_user.id)
+            )
+            country_rank = (country_rank + 1) if country_rank is not None else None
+    else:
+        # Fallback to database for global rank
+        rank_result = await db.execute(
+            select(func.count(UserElo.id))
+            .where(UserElo.elo > user_elo.elo)
         )
-        country_rank = (country_rank + 1) if country_rank is not None else None
+        global_rank = (rank_result.scalar() or 0) + 1
+        
+        # Fallback to database for country rank
+        if current_user.country:
+            country_rank_result = await db.execute(
+                select(func.count(UserElo.id))
+                .join(User, User.id == UserElo.user_id)
+                .where(
+                    and_(
+                        User.country == current_user.country,
+                        UserElo.elo > user_elo.elo
+                    )
+                )
+            )
+            country_rank = (country_rank_result.scalar() or 0) + 1
     
     # Get current season
     season_result = await db.execute(
@@ -103,17 +127,41 @@ async def get_user_elo(
     )
     user = user_result.scalar_one_or_none()
     
-    # Get ranks from Redis
-    global_rank = await redis_service.zrevrank("lb:global", str(user_id))
-    global_rank = (global_rank + 1) if global_rank is not None else None
-    
+    # Get ranks from Redis or database
+    global_rank = None
     country_rank = None
-    if user and user.country:
-        country_rank = await redis_service.zrevrank(
-            f"lb:country:{user.country}",
-            str(user_id)
+    
+    if redis_service.is_available:
+        global_rank = await redis_service.zrevrank("lb:global", str(user_id))
+        global_rank = (global_rank + 1) if global_rank is not None else None
+        
+        if user and user.country:
+            country_rank = await redis_service.zrevrank(
+                f"lb:country:{user.country}",
+                str(user_id)
+            )
+            country_rank = (country_rank + 1) if country_rank is not None else None
+    else:
+        # Fallback to database for global rank
+        rank_result = await db.execute(
+            select(func.count(UserElo.id))
+            .where(UserElo.elo > user_elo.elo)
         )
-        country_rank = (country_rank + 1) if country_rank is not None else None
+        global_rank = (rank_result.scalar() or 0) + 1
+        
+        # Fallback to database for country rank
+        if user and user.country:
+            country_rank_result = await db.execute(
+                select(func.count(UserElo.id))
+                .join(User, User.id == UserElo.user_id)
+                .where(
+                    and_(
+                        User.country == user.country,
+                        UserElo.elo > user_elo.elo
+                    )
+                )
+            )
+            country_rank = (country_rank_result.scalar() or 0) + 1
     
     return UserRankResponse(
         elo=user_elo.elo,

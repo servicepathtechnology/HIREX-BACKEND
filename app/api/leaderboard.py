@@ -83,24 +83,64 @@ async def get_global_leaderboard(
     start = (page - 1) * limit
     end = start + limit - 1
     
-    # Get from Redis sorted set
-    user_ids_with_scores = await redis_service.zrevrange(
-        "lb:global", start, end, withscores=True
-    )
+    # Try Redis first, fallback to database
+    if redis_service.is_available:
+        # Get from Redis sorted set
+        user_ids_with_scores = await redis_service.zrevrange(
+            "lb:global", start, end, withscores=True
+        )
+        
+        # Extract user IDs (every other element)
+        user_ids = [user_ids_with_scores[i] for i in range(0, len(user_ids_with_scores), 2)]
+        
+        # Hydrate rows
+        rows = await hydrate_leaderboard_rows(db, user_ids, start)
+        
+        # Get total count
+        total_count = await redis_service.zcard("lb:global")
+        
+        # Get current user's row
+        user_rank = await redis_service.zrevrank("lb:global", str(current_user.id))
+    else:
+        # Fallback to database query
+        result = await db.execute(
+            select(User, UserElo)
+            .join(UserElo, User.id == UserElo.user_id)
+            .order_by(desc(UserElo.elo))
+            .limit(limit)
+            .offset(start)
+        )
+        rows_data = result.all()
+        
+        rows = []
+        for idx, (user, user_elo) in enumerate(rows_data):
+            win_rate = (user_elo.wins / user_elo.matches_played * 100) if user_elo.matches_played > 0 else 0
+            rows.append(LeaderboardRow(
+                rank=start + idx + 1,
+                user_id=str(user.id),
+                name=user.full_name,
+                avatar=user.avatar_url,
+                country=user.country,
+                elo=user_elo.elo,
+                tier=user_elo.tier,
+                win_rate=round(win_rate, 1),
+                matches_played=user_elo.matches_played,
+            ))
+        
+        # Get total count
+        count_result = await db.execute(select(func.count(UserElo.id)))
+        total_count = count_result.scalar() or 0
+        
+        # Get current user's rank
+        rank_result = await db.execute(
+            select(func.count(UserElo.id))
+            .where(UserElo.elo > (
+                select(UserElo.elo).where(UserElo.user_id == current_user.id)
+            ))
+        )
+        user_rank = rank_result.scalar()
     
-    # Extract user IDs (every other element)
-    user_ids = [user_ids_with_scores[i] for i in range(0, len(user_ids_with_scores), 2)]
-    
-    # Hydrate rows
-    rows = await hydrate_leaderboard_rows(db, user_ids, start)
-    
-    # Get total count
-    total_count = await redis_service.zcard("lb:global")
-    
-    # Get current user's row
-    user_rank = await redis_service.zrevrank("lb:global", str(current_user.id))
     user_row = None
-    
     if user_rank is not None:
         user_rank += 1  # Convert to 1-indexed
         user_elo_result = await db.execute(
